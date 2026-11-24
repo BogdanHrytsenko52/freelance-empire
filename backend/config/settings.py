@@ -10,22 +10,62 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
+import os
+from datetime import timedelta
 from pathlib import Path
+from typing import Final
+
+from django.core.exceptions import ImproperlyConfigured
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+load_dotenv(BASE_DIR / ".env")
+
+
+def _env_list(name: str, default: str = "") -> list[str]:
+    """Return a comma-separated environment variable as a clean list."""
+    return [
+        item.strip() for item in os.getenv(name, default).split(",") if item.strip()
+    ]
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Read common boolean spellings from the environment."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_positive_int(name: str, default: int) -> int:
+    """Read a positive integer setting and reject invalid simulation timing."""
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError as error:
+        raise ImproperlyConfigured(f"{name} must be a positive integer.") from error
+    if value <= 0:
+        raise ImproperlyConfigured(f"{name} must be a positive integer.")
+    return value
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-csz#0g_+u88cb1nzqg9v5c@7!6jmj+(d3b(%12ha1a7vx2!otp"
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = _env_bool("DJANGO_DEBUG", default=True)
 
-ALLOWED_HOSTS = []
+if not SECRET_KEY:
+    if DEBUG:
+        SECRET_KEY = "django-insecure-local-development-key"
+    else:
+        raise RuntimeError("DJANGO_SECRET_KEY must be set when DJANGO_DEBUG is false.")
+
+ALLOWED_HOSTS = _env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
 
 
 # Application definition
@@ -37,9 +77,27 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "rest_framework_simplejwt.token_blacklist",
     "rest_framework",
     "corsheaders",
+    "drf_spectacular",
+    "accounts",
+    "simulation",
+    "ai_service",
 ]
+
+AUTH_USER_MODEL = "accounts.User"
+GAME_DAY_DURATION_SECONDS = _env_positive_int("GAME_DAY_DURATION_SECONDS", 3600)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_ENABLED = _env_bool("GROQ_ENABLED", default=False)
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
+GROQ_TIMEOUT_SECONDS = _env_positive_int("GROQ_TIMEOUT_SECONDS", 15)
+GROQ_MAX_RETRIES = _env_positive_int("GROQ_MAX_RETRIES", 2)
+GROQ_MAX_OUTPUT_TOKENS = _env_positive_int("GROQ_MAX_OUTPUT_TOKENS", 300)
+AI_MAX_MESSAGE_LENGTH = _env_positive_int("AI_MAX_MESSAGE_LENGTH", 1000)
+AI_MAX_HISTORY_MESSAGES = _env_positive_int("AI_MAX_HISTORY_MESSAGES", 20)
+AI_REQUESTS_PER_MINUTE = _env_positive_int("AI_REQUESTS_PER_MINUTE", 5)
+AI_MAX_NEGOTIATION_MESSAGES = _env_positive_int("AI_MAX_NEGOTIATION_MESSAGES", 10)
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
@@ -53,10 +111,11 @@ MIDDLEWARE = [
 ]
 
 # Allow local frontend development servers without allowing arbitrary origins.
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+CORS_ALLOWED_ORIGINS = _env_list(
+    "CORS_ALLOWED_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173",
+)
+CORS_ALLOW_CREDENTIALS = True
 
 ROOT_URLCONF = "config.urls"
 
@@ -84,7 +143,7 @@ WSGI_APPLICATION = "config.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "NAME": os.getenv("DJANGO_SQLITE_PATH", str(BASE_DIR / "db.sqlite3")),
     }
 }
 
@@ -124,6 +183,45 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
 STATIC_URL = "static/"
+
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+REST_FRAMEWORK: Final = {
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ),
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_THROTTLE_CLASSES": ("rest_framework.throttling.ScopedRateThrottle",),
+    "DEFAULT_THROTTLE_RATES": {
+        "auth_login": os.getenv("AUTH_LOGIN_THROTTLE", "5/min"),
+        "auth_register": os.getenv("AUTH_REGISTER_THROTTLE", "3/min"),
+        "auth_refresh": os.getenv("AUTH_REFRESH_THROTTLE", "10/min"),
+    },
+}
+
+SPECTACULAR_SETTINGS: Final = {
+    "TITLE": "Freelance Empire API",
+    "VERSION": "1.0.0",
+}
+
+SIMPLE_JWT: Final = {
+    "AUTH_HEADER_TYPES": ("Bearer",),
+    "BLACKLIST_AFTER_ROTATION": True,
+    "ROTATE_REFRESH_TOKENS": _env_bool("JWT_ROTATE_REFRESH_TOKENS", default=True),
+    "ACCESS_TOKEN_LIFETIME": timedelta(
+        minutes=int(os.getenv("JWT_ACCESS_TOKEN_MINUTES", "15"))
+    ),
+    "REFRESH_TOKEN_LIFETIME": timedelta(
+        days=int(os.getenv("JWT_REFRESH_TOKEN_DAYS", "7"))
+    ),
+}
+
+LOGGING: Final = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "root": {"handlers": ["console"], "level": os.getenv("DJANGO_LOG_LEVEL", "INFO")},
+}
 
 
 # Email

@@ -38,8 +38,22 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "drf_spectacular",
     "corsheaders",
+    "companies",
+    "employees",
+    "contracts",
+    "projects",
+    "finances",
+    "events",
+    "notifications",
+    "leaderboard",
 ]
+REST_FRAMEWORK = {
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 20,
+}
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
@@ -133,4 +147,12 @@ MAILERS = {
     "default": {
         "BACKEND": "django.core.mail.backends.console.EmailBackend",
     },
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Freelance Empire API",
+    "DESCRIPTION": "REST API браузерного симулятора фріланс-компанії Freelance Empire.",
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "COMPONENT_SPLIT_REQUEST": True,
 }
